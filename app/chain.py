@@ -1,5 +1,7 @@
 import os
+os.environ["OPENAI_API_KEY"] = "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"
 from dotenv import load_dotenv
+
 
 from llama_index.core import VectorStoreIndex, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
