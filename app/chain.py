@@ -1,7 +1,5 @@
 import os
-os.environ["OPENAI_API_KEY"] = "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"
 from dotenv import load_dotenv
-
 
 from llama_index.core import VectorStoreIndex, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -10,16 +8,12 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 from langchain_core.messages import HumanMessage, AIMessage
 import chromadb
 
-load_dotenv()
-
-import os
-print(f"🔑 OPENAI_API_KEY 앞 10자: {os.getenv('OPENAI_API_KEY', 'None')[:10]}")
+load_dotenv(override=False)
 
 CHROMA_DIR      = "vectorstore/chroma_db"
 COLLECTION_NAME = "nutrition"
-TOP_K           = 6  # ✅ 4→6으로 늘림
+TOP_K           = 6
 
-# ✅ 개선된 리라이팅 프롬프트
 REWRITE_PROMPT = """당신은 식품 영양성분 검색 전문가입니다.
 아래 대화 히스토리와 사용자 질문을 보고, 벡터 DB 검색에 최적화된 질문으로 재작성하세요.
 
