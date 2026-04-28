@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 import os
-load_dotenv()
+load_dotenv(override=False)  # ✅ Railway 환경변수 우선, .env는 없을 때만 사용
 
 # ✅ LangSmith 설정
 os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
