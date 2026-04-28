@@ -1,5 +1,6 @@
-const API_URL = "http://127.0.0.1:8000/chat";
-const STREAM_URL = "http://127.0.0.1:8000/chat/stream";
+// 배포 환경에서는 같은 서버에서 서빙되므로
+const API_URL = "/chat";
+const STREAM_URL = "/chat/stream";
 
 // 기존 일반 요청 (그대로 유지)
 export async function sendChatMessage(question, history = []) {

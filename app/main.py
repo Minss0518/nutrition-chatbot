@@ -1,22 +1,34 @@
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
+# ✅ LangSmith 설정
+os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
+os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
+os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "nutrition-chatbot")
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import asyncio
 import json
 
 from app.schemas import ChatRequest, ChatResponse, SourceDocument
-from app.chain import load_chain, format_history
+from app.chain import load_chain, format_history, format_history_text
 
 rag_chain = None
 rag_retriever = None
+rewrite_and_retrieve = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global rag_chain, rag_retriever
+    global rag_chain, rag_retriever, rewrite_and_retrieve
     print("🚀 RAG 체인 초기화 중...")
     try:
-        rag_chain, rag_retriever = load_chain()
+        rag_chain, rag_retriever, rewrite_and_retrieve = load_chain()
         print("✅ RAG 체인 준비 완료!")
     except FileNotFoundError as e:
         print(f"⚠️  경고: {e}")
@@ -37,8 +49,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ✅ React 빌드 파일 서빙
+FRONTEND_DIST = "nutrition-frontend/dist"
+if os.path.exists(FRONTEND_DIST):
+    app.mount("/assets", StaticFiles(directory=f"{FRONTEND_DIST}/assets"), name="assets")
+
 @app.get("/")
 def root():
+    # 빌드 파일 있으면 React 앱 서빙, 없으면 API 상태 반환
+    index_path = f"{FRONTEND_DIST}/index.html"
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
     return {"message": "식품 영양성분 챗봇 API 🥗", "status": "running"}
 
 @app.get("/health")
@@ -48,7 +69,31 @@ def health_check():
         "chain_loaded": rag_chain is not None,
     }
 
-# 기존 /chat (그대로 유지)
+def parse_source_nodes(nodes):
+    sources = []
+    seen = set()
+    for node in nodes:
+        food_name = node.metadata.get("식품명", "")
+        content_preview = node.get_content()[:200]
+        key = content_preview[:50]
+        if key not in seen:
+            seen.add(key)
+            sources.append(SourceDocument(page=0, content=content_preview))
+    return sources
+
+def parse_source_nodes_dict(nodes):
+    sources = []
+    seen = set()
+    for node in nodes:
+        food_name = node.metadata.get("식품명", "")
+        content_preview = node.get_content()[:200]
+        key = content_preview[:50]
+        if key not in seen:
+            seen.add(key)
+            sources.append({"food_name": food_name, "content": content_preview})
+    return sources
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     if rag_chain is None:
@@ -56,19 +101,19 @@ async def chat(request: ChatRequest):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
     try:
-        history = format_history([m.dict() for m in request.history])
-        answer = rag_chain.invoke({"question": request.question, "history": history})
+        history_raw = [m.dict() for m in request.history]
+        history = format_history(history_raw)
+        history_text = format_history_text(history_raw)
 
-        source_docs = rag_retriever.invoke(request.question)
-        sources = []
-        seen = set()
-        for doc in source_docs:
-            page = doc.metadata.get("page", 0) + 1
-            content_preview = doc.page_content[:200]
-            key = content_preview[:50]
-            if key not in seen:
-                seen.add(key)
-                sources.append(SourceDocument(page=page, content=content_preview))
+        retrieved = rewrite_and_retrieve({
+            "question": request.question,
+            "history": history,
+            "history_text": history_text,
+        })
+
+        answer = rag_chain.invoke(retrieved)
+        source_nodes = rag_retriever.retrieve(retrieved["rewritten_question"])
+        sources = parse_source_nodes(source_nodes)
 
         return ChatResponse(answer=answer, sources=sources)
 
@@ -76,7 +121,6 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"답변 생성 중 오류 발생: {str(e)}")
 
 
-# ✅ 스트리밍 + 메모리 엔드포인트
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     if rag_chain is None:
@@ -86,22 +130,26 @@ async def chat_stream(request: ChatRequest):
 
     async def generate():
         try:
-            source_docs = rag_retriever.invoke(request.question)
-            sources = []
-            seen = set()
-            for doc in source_docs:
-                food_name = doc.metadata.get("식품명", "")
-                content_preview = doc.page_content[:200]
-                key = content_preview[:50]
-                if key not in seen:
-                    seen.add(key)
-                    sources.append({
-                        "food_name": food_name,
-                        "content": content_preview,
-                    })
+            history_raw = [m.dict() for m in request.history]
+            history = format_history(history_raw)
+            history_text = format_history_text(history_raw)
 
-            history = format_history([m.dict() for m in request.history])
-            async for chunk in rag_chain.astream({"question": request.question, "history": history}):
+            retrieved = rewrite_and_retrieve({
+                "question": request.question,
+                "history": history,
+                "history_text": history_text,
+            })
+
+            rewrite_data = json.dumps({
+                "type": "rewrite",
+                "content": retrieved["rewritten_question"]
+            }, ensure_ascii=False)
+            yield f"data: {rewrite_data}\n\n"
+
+            source_nodes = rag_retriever.retrieve(retrieved["rewritten_question"])
+            sources = parse_source_nodes_dict(source_nodes)
+
+            async for chunk in rag_chain.astream(retrieved):
                 data = json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)
                 yield f"data: {data}\n\n"
                 await asyncio.sleep(0)
@@ -118,8 +166,13 @@ async def chat_stream(request: ChatRequest):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+# ✅ React 라우터 지원 (새로고침해도 React 앱 유지)
+@app.get("/{full_path:path}")
+async def serve_react(full_path: str):
+    index_path = f"{FRONTEND_DIST}/index.html"
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="Not found")

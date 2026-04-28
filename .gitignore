@@ -4,8 +4,8 @@
 # 가상환경
 venv/
 
-# 벡터 저장소
-vectorstore/
+# 벡터 저장소 (배포용으로 GitHub에 올림)
+# vectorstore/  ← 주석 처리
 
 # 데이터 파일
 data/
