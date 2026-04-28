@@ -16,7 +16,7 @@ __pycache__/
 
 # 프론트엔드
 nutrition-frontend/node_modules/
-nutrition-frontend/dist/
+# nutrition-frontend/dist/
 
 # React 패키지
 node_modules/
