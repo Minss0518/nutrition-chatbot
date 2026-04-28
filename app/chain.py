@@ -10,6 +10,9 @@ import chromadb
 
 load_dotenv()
 
+import os
+print(f"🔑 OPENAI_API_KEY 앞 10자: {os.getenv('OPENAI_API_KEY', 'None')[:10]}")
+
 CHROMA_DIR      = "vectorstore/chroma_db"
 COLLECTION_NAME = "nutrition"
 TOP_K           = 6  # ✅ 4→6으로 늘림
